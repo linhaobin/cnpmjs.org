@@ -9,18 +9,12 @@ var config = require('../config');
 
 module.exports = function (options) {
   var redirectUrl = config.sourceNpmRegistry;
-  var proxyUrls = [
-    // /:pkg, dont contains scoped package
-    /^\/[\w\-\.]+$/,
-    // /-/package/:pkg/dist-tags
-    /^\/\-\/package\/[\w\-\.]+\/dist-tags/,
-  ];
-  if (options && options.isWeb) {
+  var isWeb = options && options.isWeb
+  var proxyUrls = createUrls(isWeb)
+  var privatePackageUrls = createPrivatePackageUrls(isWeb)
+
+  if (isWeb) {
     redirectUrl = redirectUrl.replace('//registry.', '//');
-    proxyUrls = [
-      // /package/:pkg
-      /^\/package\/[\w\-\.]+$/,
-    ];
   }
   return function* proxyToNpm(next) {
     if (config.syncModel !== 'none') {
@@ -43,8 +37,46 @@ module.exports = function (options) {
       return yield next;
     }
 
+    var isPrivatePackages
+    for (var i = 0; i < privatePackageUrls.length; i++) {
+      isPrivatePackages = privatePackageUrls[i].test(pathname);
+      if (isPrivatePackages) {
+        break;
+      }
+    }
+
+    if (isPrivatePackages) {
+      return yield next;
+    }
+
+
     var url = redirectUrl + this.url;
     debug('proxy to %s', url);
     this.redirect(url);
   };
 };
+
+function createPrivatePackageUrls(isWeb) {
+  var urls = []
+
+  if (config.privatePackages && config.privatePackages.length) {
+    for (var i = 0; i < config.privatePackages.length; i++) {
+      urls = urls.concat(createUrls(isWeb, config.privatePackages[i]))
+    }
+  }
+  return urls
+}
+
+function createUrls(isWeb, pak) {
+  var pakRegExp = pak || '[\\w\\-\\.]+'
+  if (!isWeb) {
+    return [
+      // /:pkg, dont contains scoped package
+      new RegExp('^\\/' + pakRegExp + '$'),
+      // /-/package/:pkg/dist-tags
+      new RegExp('^\\/\\-\\/package\\/' + pakRegExp + '\\/dist-tags')
+    ]
+  }
+
+  return [new RegExp('^\\/package\\/' + pakRegExp + '$')]
+}
