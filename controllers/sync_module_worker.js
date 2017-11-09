@@ -333,8 +333,26 @@ SyncModuleWorker.prototype.syncByName = function* (concurrencyId, name, registry
       var errMessage = err.name + ': ' + err.message;
       that.log('[c#%s] [error] [%s] get package(%s%s) error: %s, status: %s',
         concurrencyId, name, registry, packageUrl, errMessage, status);
-      yield that._doneOne(concurrencyId, name, false);
-      return;
+      if (err.res.statusCode < 500 || registry !== config.officialNpmReplicate) {
+        // sync fail
+        yield that._doneOne(concurrencyId, name, false);
+        return;
+      }
+
+      // retry from officialNpmRegistry
+      this.log('[c#%d] [%s] retry from %s', concurrencyId, name, config.officialNpmRegistry);
+      try {
+        var result = yield npmSerivce.request(packageUrl, { registry: config.officialNpmRegistry });
+        pkg = result.data;
+        status = result.status;
+      } catch (err) {
+        var errMessage = err.name + ': ' + err.message;
+        that.log('[c#%s] [error] [%s] get package(%s%s) error: %s, status: %s',
+          concurrencyId, name, config.officialNpmRegistry, packageUrl, errMessage, status);
+        // sync fail
+        yield that._doneOne(concurrencyId, name, false);
+        return;
+      }
     }
   }
 
@@ -1319,8 +1337,12 @@ SyncModuleWorker.prototype._syncOneVersion = function *(versionIndex, sourcePack
     //make sure sync module have the correct author info
     //only if can not get maintainers, use the username
     var author = username;
-    if (Array.isArray(sourcePackage.maintainers)) {
+    if (Array.isArray(sourcePackage.maintainers) && sourcePackage.maintainers.length > 0) {
       author = sourcePackage.maintainers[0].name || username;
+    } else if (sourcePackage._npmUser && sourcePackage._npmUser.name) {
+      // try to use _npmUser instead
+      author = sourcePackage._npmUser.name;
+      sourcePackage.maintainers = [ sourcePackage._npmUser ];
     }
 
     var mod = {
